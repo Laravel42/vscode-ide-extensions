@@ -2,7 +2,7 @@
   "name": "dom-inspector",
   "displayName": "DOM Inspector",
   "description": "Pick DOM elements from an embedded browser, find the source code, and get context for AI chat",
-  "version": "0.4.3",
+  "version": "0.4.13",
   "publisher": "L42",
   "repository": {
     "type": "git",

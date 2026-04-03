@@ -57,6 +57,8 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
         this.callbacks.onNodeClicked(msg.selector);
       } else if (msg.type === "request_children" && msg.selector) {
         this.callbacks.onRequestChildren(msg.selector);
+      } else if (msg.type === "open_url") {
+        vscode.commands.executeCommand("domInspector.openUrl");
       }
     });
 
@@ -89,6 +91,11 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
   /** Lightweight hover preview — updates the element summary without full detail. */
   updateHoverPreview(data: HoverData): void {
     this.postMessage({ type: "update_hover_preview", data });
+  }
+
+  /** Send a debug log message to the sidebar panel. */
+  log(message: string): void {
+    this.postMessage({ type: "debug_log", message });
   }
 
   /* ------------------------------------------------------------------ */
@@ -142,6 +149,12 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
   }
   .section { padding: 6px 12px 10px; border-bottom: 1px solid var(--border); }
   .empty-state { padding: 24px 12px; text-align: center; color: var(--text-muted); }
+  .open-url-btn {
+    display: inline-block; margin-top: 12px; padding: 6px 16px;
+    background: var(--accent); color: #0d1117; border: none; border-radius: 4px;
+    font: 12px/1.4 system-ui; cursor: pointer; font-weight: 500;
+  }
+  .open-url-btn:hover { opacity: 0.85; }
 
   /* Element summary */
   .el-tag { color: var(--tag-color); font-weight: 600; }
@@ -159,12 +172,25 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
     border-radius: 4px; font-size: 11px; color: var(--text-muted);
     max-height: 48px; overflow: hidden; word-break: break-word;
   }
-  .html-preview {
-    margin-top: 4px; padding: 4px 8px; background: rgba(110,118,129,0.08);
-    border-radius: 4px; font-size: 10px; font-family: monospace;
-    color: var(--text-muted); max-height: 60px; overflow: hidden;
-    white-space: pre-wrap; word-break: break-all;
+  .code-editor {
+    margin: 0; padding: 8px 10px; background: #0d1117;
+    border: 1px solid var(--border); border-radius: 4px;
+    font: 11px/1.5 "SF Mono", "Fira Code", "Cascadia Code", Menlo, Consolas, monospace;
+    color: var(--text); white-space: pre-wrap; word-break: break-all;
+    overflow-x: auto; max-height: 200px; overflow-y: auto;
+    tab-size: 2; counter-reset: line;
   }
+  .code-editor .hl-tag { color: var(--tag-color); }
+  .code-editor .hl-attr { color: var(--attr-key); }
+  .code-editor .hl-val { color: var(--attr-val); }
+  .code-editor .hl-punct { color: var(--text-muted); }
+  .code-editor .hl-text { color: var(--text); opacity: 0.7; }
+  .code-copy {
+    float: right; background: none; border: 1px solid var(--border); border-radius: 3px;
+    color: var(--text-muted); font-size: 10px; padding: 1px 6px; cursor: pointer;
+    margin-bottom: 4px; transition: color 0.1s, border-color 0.1s;
+  }
+  .code-copy:hover { color: var(--text); border-color: var(--text-muted); }
 
   /* Dimensions bar */
   .dims { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 11px; }
@@ -189,20 +215,35 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
   .bm-content-size { font-size: 11px; color: var(--accent); font-weight: 500; }
 
   /* DOM path */
-  .dom-path { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
-  .dom-path span { cursor: pointer; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
-  .dom-path span:hover { background: var(--highlight-bg); }
-  .dom-path .sep { color: var(--text-muted); cursor: default; }
-  .dom-path .sep:hover { background: none; }
+  .dom-path { display: flex; flex-wrap: wrap; gap: 0; align-items: center; font: 11px/1.4 monospace; }
+  .dom-path .dp-seg {
+    cursor: pointer; padding: 2px 6px; border-radius: 3px;
+    color: var(--tag-color); transition: background 0.1s;
+  }
+  .dom-path .dp-seg:hover { background: var(--highlight-bg); }
+  .dom-path .dp-seg .dp-id { color: var(--id-color); }
+  .dom-path .dp-seg .dp-cls { color: var(--class-color); opacity: 0.7; }
+  .dom-path .dp-sep { color: var(--border); padding: 0 1px; user-select: none; }
 
   /* Component hierarchy */
-  .comp-path { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
-  .comp-path span { padding: 1px 4px; border-radius: 3px; font-size: 11px; color: var(--accent); }
-  .comp-path .sep { color: var(--text-muted); }
-  .comp-detail { font-size: 11px; margin-top: 4px; }
-  .comp-detail .cd-key { color: var(--text-muted); }
-  .comp-detail .cd-val { color: var(--text); }
-  .comp-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 3px; background: rgba(88,166,255,0.12); color: var(--accent); margin-top: 4px; }
+  .comp-chain { display: flex; flex-direction: column; gap: 0; font: 11px/1 monospace; }
+  .comp-node {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 6px 4px calc(var(--cdepth, 0) * 14px + 6px);
+    border-left: 1px solid var(--border); margin-left: 8px;
+    cursor: default; transition: background 0.1s;
+  }
+  .comp-node:first-child { border-left-color: transparent; }
+  .comp-node:hover { background: var(--highlight-bg); }
+  .comp-name { color: var(--accent); font-weight: 500; }
+  .comp-badge {
+    display: inline-block; font-size: 9px; padding: 1px 5px; border-radius: 3px;
+    background: rgba(88,166,255,0.1); color: var(--accent); text-transform: uppercase;
+    letter-spacing: 0.3px; font-weight: 600;
+  }
+  .comp-meta { font-size: 10px; color: var(--text-muted); margin-top: 4px; padding: 0 6px; }
+  .comp-meta a { color: var(--accent); text-decoration: none; }
+  .comp-meta a:hover { text-decoration: underline; }
 
   /* Computed styles */
   .style-grid { display: grid; grid-template-columns: auto 1fr; gap: 1px 8px; font-size: 11px; }
@@ -211,37 +252,29 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
   .color-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; border: 1px solid var(--border); vertical-align: middle; margin-right: 4px; }
 
   /* DOM tree */
+  #dom-tree { font: 12px/1.4 monospace; padding: 2px 0; }
   .tree-node {
-    padding: 3px 0 3px calc(var(--depth, 0) * 16px + 6px);
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-size: 12px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    border-left: 2px solid transparent;
+    padding: 2px 0 2px calc(var(--depth, 0) * 16px + 8px);
+    cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: flex; align-items: center; gap: 3px;
+    border-left: 2px solid transparent; transition: background 0.08s;
   }
-  .tree-node:hover { background: var(--highlight-bg); }
-  .tree-node.highlighted { background: rgba(88,166,255,0.22); border-left-color: var(--accent); }
+  .tree-node:hover { background: rgba(88,166,255,0.06); }
+  .tree-node.highlighted { background: rgba(88,166,255,0.14); border-left-color: var(--accent); }
   .tree-toggle {
-    display: inline-block;
-    width: 14px;
-    text-align: center;
-    color: var(--text-muted);
-    flex-shrink: 0;
-    user-select: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; font-size: 10px;
+    color: var(--text-muted); flex-shrink: 0; user-select: none;
+    border-radius: 3px; transition: background 0.1s;
   }
+  .tree-toggle:hover { background: rgba(110,118,129,0.15); }
+  .tree-label { display: inline; }
   .tree-label .t-tag { color: var(--tag-color); }
-  .tree-label .t-id { color: var(--id-color); }
-  .tree-label .t-class { color: var(--class-color); }
-  .tree-label .t-count { color: var(--text-muted); font-size: 10px; }
+  .tree-label .t-id { color: var(--id-color); font-weight: 500; }
+  .tree-label .t-class { color: var(--class-color); opacity: 0.75; }
+  .tree-label .t-count { color: var(--text-muted); font-size: 10px; opacity: 0.6; }
   .show-more {
-    padding: 4px 12px;
-    color: var(--accent);
-    cursor: pointer;
-    font-size: 11px;
+    padding: 4px 12px; color: var(--accent); cursor: pointer; font-size: 11px;
   }
   .show-more:hover { text-decoration: underline; }
 
@@ -266,7 +299,10 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
 </style>
 </head>
 <body>
-  <div id="empty" class="empty-state">Pick an element in the browser to inspect it.</div>
+  <div id="empty" class="empty-state">
+    No browser open.<br>
+    <button class="open-url-btn" id="open-url-btn">Open URL</button>
+  </div>
   <div id="content" style="display:none">
     <h3>Element</h3>
     <div class="section" id="el-summary"></div>
@@ -289,6 +325,8 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
     <h3>DOM Tree</h3>
     <div id="dom-tree"></div>
   </div>
+  <h3 class="collapsible-header open" id="log-header">Debug Log</h3>
+  <div class="collapsible-body open" id="debug-log" style="max-height:200px;overflow-y:auto;font:11px/1.4 monospace;padding:6px 10px;color:var(--text-muted);background:var(--bg);border-top:1px solid var(--border);"></div>
 <script>
 (function() {
   const vscode = acquireVsCodeApi();
@@ -297,6 +335,11 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
   const $ = (id) => document.getElementById(id);
   const emptyEl = $("empty");
   const contentEl = $("content");
+
+  /* ---- Open URL button ---- */
+  document.getElementById("open-url-btn").addEventListener("click", () => {
+    vscode.postMessage({ type: "open_url" });
+  });
 
   /* ---- Collapsible sections ---- */
   document.querySelectorAll(".collapsible-header").forEach(h => {
@@ -328,6 +371,16 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
   function colorSwatch(v) {
     if (!isColorValue(v)) return '';
     return '<span class="color-swatch" style="background:' + esc(v) + '"></span>';
+  }
+
+  /* ---- HTML syntax highlighter ---- */
+  function highlightHtml(raw) {
+    // Simple HTML syntax highlighting
+    return esc(raw)
+      .replace(/&lt;(\\/?)([a-zA-Z][a-zA-Z0-9-]*)/g, '<span class="hl-punct">&lt;$1</span><span class="hl-tag">$2</span>')
+      .replace(/&gt;/g, '<span class="hl-punct">&gt;</span>')
+      .replace(/\\s([a-zA-Z][a-zA-Z0-9-]*)=/g, ' <span class="hl-attr">$1</span>=')
+      .replace(/=&quot;([^&]*)&quot;/g, '=<span class="hl-punct">&quot;</span><span class="hl-val">$1</span><span class="hl-punct">&quot;</span>');
   }
 
   /* ---- Box model diagram ---- */
@@ -397,7 +450,13 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
 
     if (data.domPath && data.domPath.length) {
       $("dom-path").innerHTML = '<div class="dom-path">' +
-        data.domPath.map(seg => '<span>' + esc(seg) + '</span>').join('<span class="sep">\\u203a</span>') +
+        data.domPath.map(function(seg) {
+          var parts = seg.match(/^([a-z0-9-]+)(#[^.]*)?(\\..*)?$/i) || [seg, seg];
+          var h = '<span class="dp-seg">' + esc(parts[1] || seg);
+          if (parts[2]) h += '<span class="dp-id">' + esc(parts[2]) + '</span>';
+          if (parts[3]) h += '<span class="dp-cls">' + esc(parts[3]) + '</span>';
+          return h + '</span>';
+        }).join('<span class="dp-sep"> \\u203a </span>') +
         '</div>';
     } else {
       $("dom-path").innerHTML = '<span style="color:var(--text-muted)">\\u2014</span>';
@@ -406,20 +465,18 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
     if (data.componentInfo && data.componentInfo.componentPath && data.componentInfo.componentPath.length) {
       $("comp-heading").style.display = "";
       $("comp-hierarchy").style.display = "";
-      let ch = '<div class="comp-path">' +
-        data.componentInfo.componentPath.map(c => '<span>' + esc(c) + '</span>').join('<span class="sep">\\u203a</span>') +
-        '</div>';
-      if (data.componentInfo.framework) {
-        ch += '<span class="comp-badge">' + esc(data.componentInfo.framework) + '</span>';
+      var ci = data.componentInfo;
+      var ch = '';
+      if (ci.framework) {
+        ch += '<span class="comp-badge">' + esc(ci.framework) + '</span> ';
       }
-      if (data.componentInfo.componentName) {
-        ch += '<div class="comp-detail"><span class="cd-key">Name: </span><span class="cd-val">' + esc(data.componentInfo.componentName) + '</span></div>';
-      }
-      if (data.componentInfo.sourceFile) {
-        ch += '<div class="comp-detail"><span class="cd-key">Source: </span><span class="cd-val">' + esc(data.componentInfo.sourceFile) + '</span></div>';
-      }
-      if (data.componentInfo.sourceLine) {
-        ch += '<div class="comp-detail"><span class="cd-key">Line: </span><span class="cd-val">' + data.componentInfo.sourceLine + '</span></div>';
+      ch += '<div class="comp-chain">';
+      ci.componentPath.forEach(function(name, i) {
+        ch += '<div class="comp-node" style="--cdepth:' + i + '"><span class="comp-name">' + esc(name) + '</span></div>';
+      });
+      ch += '</div>';
+      if (ci.sourceFile) {
+        ch += '<div class="comp-meta">' + esc(ci.sourceFile) + (ci.sourceLine ? ':' + ci.sourceLine : '') + '</div>';
       }
       $("comp-hierarchy").innerHTML = ch;
     } else {
@@ -437,7 +494,16 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
     }
 
     if (data.outerSnippet) {
-      $("html-section").innerHTML = '<div class="html-preview">' + esc(data.outerSnippet) + '</div>';
+      var highlighted = highlightHtml(data.outerSnippet);
+      $("html-section").innerHTML =
+        '<button class="code-copy" id="copy-html">Copy</button>' +
+        '<pre class="code-editor">' + highlighted + '</pre>';
+      $("copy-html").onclick = function() {
+        navigator.clipboard.writeText(data.outerSnippet).then(function() {
+          $("copy-html").textContent = "Copied";
+          setTimeout(function() { $("copy-html").textContent = "Copy"; }, 1500);
+        });
+      };
     } else {
       $("html-section").innerHTML = '';
     }
@@ -605,6 +671,20 @@ export class InspectorSidebarProvider implements vscode.WebviewViewProvider {
           const frag = document.createDocumentFragment();
           renderNodes(frag, children, parentDepth + 1);
           parentRow.after(frag);
+        }
+        break;
+      }
+
+      case "debug_log": {
+        const logEl = $("debug-log");
+        if (logEl) {
+          const line = document.createElement("div");
+          line.style.borderBottom = "1px solid var(--border)";
+          line.style.padding = "2px 0";
+          const ts = new Date().toLocaleTimeString("en", {hour12:false,hour:"2-digit",minute:"2-digit",second:"2-digit"});
+          line.textContent = ts + " " + (msg.message || "");
+          logEl.appendChild(line);
+          logEl.scrollTop = logEl.scrollHeight;
         }
         break;
       }

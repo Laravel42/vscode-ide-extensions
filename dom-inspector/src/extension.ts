@@ -19,6 +19,9 @@ let connectionLostMsg: vscode.Disposable | undefined;
 let inspecting = false;
 
 export function activate(context: vscode.ExtensionContext) {
+  const output = vscode.window.createOutputChannel("DOM Inspector");
+  output.appendLine("DOM Inspector activated");
+
   // --- Sidebar provider ---
   const sidebarProvider = new InspectorSidebarProvider({
     onNodeClicked(selector: string) {
@@ -58,7 +61,7 @@ export function activate(context: vscode.ExtensionContext) {
   // --- Commands ---
   context.subscriptions.push(
     vscode.commands.registerCommand("domInspector.openUrl", () => openUrl(sidebarProvider)),
-    vscode.commands.registerCommand("domInspector.inspectElement", () => activateInspection()),
+    vscode.commands.registerCommand("domInspector.inspectElement", () => activateInspection(sidebarProvider)),
   );
 
   context.subscriptions.push({ dispose: () => breadcrumb.dispose() });
@@ -80,8 +83,10 @@ async function openUrl(sidebarProvider: InspectorSidebarProvider) {
   });
   if (!url) return;
 
+  sidebarProvider.log(`opening ${url}`);
   const proxyPort = await startProxy(url);
   const proxyUrl = `http://127.0.0.1:${proxyPort}`;
+  sidebarProvider.log(`proxy on :${proxyPort}`);
 
   if (browserPanel) {
     browserPanel.webview.html = getBrowserHtml(browserPanel.webview, proxyUrl, url);
@@ -114,15 +119,17 @@ async function openUrl(sidebarProvider: InspectorSidebarProvider) {
 // Activate inspection mode
 // ---------------------------------------------------------------------------
 
-function activateInspection() {
+function activateInspection(sidebarProvider: InspectorSidebarProvider) {
   if (!browserPanel || !bridge) {
     vscode.window.showWarningMessage(
       "Open a URL first (⌘⇧U), then pick an element.",
     );
     return;
   }
+  sidebarProvider.log("starting inspection");
   browserPanel.reveal(vscode.ViewColumn.One);
   bridge.sendToPage({ type: "start_inspector" });
+  sidebarProvider.log("sent start_inspector to page");
   inspecting = true;
 }
 
@@ -135,9 +142,11 @@ function wireUpBridge(
   sidebarProvider: InspectorSidebarProvider,
 ) {
   br.onMessage((msg: BridgeMessage) => {
+    sidebarProvider.log(`bridge ← ${msg.type}`);
     switch (msg.type) {
       case "element_picked":
         inspecting = false;
+        sidebarProvider.log(`picked: <${msg.data.tag}> ${msg.data.selector}`);
         handleElementPicked(msg.data, sidebarProvider);
         break;
 
@@ -147,18 +156,22 @@ function wireUpBridge(
 
       case "element_pick_cancelled":
         inspecting = false;
+        sidebarProvider.log("inspection cancelled (Escape)");
         break;
 
       case "children_response":
+        sidebarProvider.log(`children: ${msg.children.length} for ${msg.selector}`);
         sidebarProvider.updateDOMTree(msg.children);
         break;
 
       case "framework_detected":
-        // Could store for later use
+        sidebarProvider.log(`framework: ${msg.framework}`);
         break;
 
       case "inspector_ready":
-        // Heartbeat handled internally by BridgeChannel
+        sidebarProvider.log("inspector ready (page loaded)");
+        // Request root-level children to populate the DOM tree
+        br.sendToPage({ type: "get_children", selector: "body" });
         break;
 
       default:
@@ -167,6 +180,7 @@ function wireUpBridge(
   });
 
   br.onConnectionLost(() => {
+    sidebarProvider.log("connection lost");
     connectionLostMsg?.dispose();
     connectionLostMsg = vscode.window.setStatusBarMessage(
       "$(warning) Inspector connection lost — waiting for page reload…",
@@ -192,6 +206,7 @@ async function handleElementPicked(
 
   // 1. Run SourceMapper
   const source = await sourceMapper.resolve(element, cwd);
+  sidebarProvider.log(`source: ${source ? source.strategy + " → " + source.filePath + ":" + source.line : "not found"}`);
 
   // 2. Open file side by side and highlight line
   let snippet = "";
@@ -207,6 +222,7 @@ async function handleElementPicked(
 
   // 3. Update sidebar
   sidebarProvider.updateElement(element);
+  sidebarProvider.log(`element has ${element.children?.length || 0} direct children`);
   if (element.children && element.children.length > 0) {
     sidebarProvider.updateDOMTree(element.children);
   }
@@ -320,12 +336,10 @@ async function navigateSourceForSelector(selector: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function getBrowserHtml(webview: vscode.Webview, proxyUrl: string, originalUrl: string): string {
-  const nonce = getNonce();
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; frame-src http://127.0.0.1:*;">
   <style>
     html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0d1117; }
     body { display: flex; flex-direction: column; height: 100vh; }
@@ -367,7 +381,7 @@ function getBrowserHtml(webview: vscode.Webview, proxyUrl: string, originalUrl: 
     </button>
   </div>
   <iframe id="frame" src="${proxyUrl}"></iframe>
-  <script nonce="${nonce}">
+  <script>
     (function() {
       const vscode = acquireVsCodeApi();
       const frame = document.getElementById('frame');
@@ -396,6 +410,7 @@ function getBrowserHtml(webview: vscode.Webview, proxyUrl: string, originalUrl: 
       window.addEventListener('message', function(ev) {
         const msg = ev.data;
         if (!msg || typeof msg.type !== 'string') return;
+        console.log('[webview] message received:', msg.type, 'from origin:', ev.origin);
 
         // If it's a message type destined for the page, relay to iframe
         if (TO_PAGE_TYPES.indexOf(msg.type) !== -1) {
@@ -419,12 +434,13 @@ function getBrowserHtml(webview: vscode.Webview, proxyUrl: string, originalUrl: 
       document.getElementById('reload').onclick = function() { frame.src = frame.src; };
 
       inspectBtn.onclick = function() {
+        console.log('[webview] inspect button clicked, isInspecting:', isInspecting);
         if (isInspecting) {
-          try { frame.contentWindow.postMessage({ type: 'stop_inspector' }, '*'); } catch(e) {}
+          try { frame.contentWindow.postMessage({ type: 'stop_inspector' }, '*'); } catch(e) { console.error('[webview] postMessage failed:', e); }
           vscode.postMessage({ type: 'stop_inspector' });
           setInspecting(false);
         } else {
-          try { frame.contentWindow.postMessage({ type: 'start_inspector' }, '*'); } catch(e) {}
+          try { frame.contentWindow.postMessage({ type: 'start_inspector' }, '*'); } catch(e) { console.error('[webview] postMessage failed:', e); }
           vscode.postMessage({ type: 'start_inspector' });
           setInspecting(true);
         }

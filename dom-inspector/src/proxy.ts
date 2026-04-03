@@ -13,10 +13,10 @@ const INSPECTOR_SCRIPT = `
 // OverlayRenderer
 // ---------------------------------------------------------------------------
 var COLORS = {
-  content: 'rgba(111, 168, 220, 0.66)',
-  padding: 'rgba(147, 196, 125, 0.55)',
-  border: 'rgba(255, 229, 153, 0.66)',
-  margin: 'rgba(246, 178, 107, 0.66)'
+  content: 'rgba(66, 153, 225, 0.20)',
+  padding: 'rgba(72, 199, 142, 0.20)',
+  border: 'rgba(66, 153, 225, 0.15)',
+  margin: 'rgba(239, 68, 68, 0.20)'
 };
 var OVERLAY_Z = '2147483646';
 var BASE_STYLES = {position:'fixed',pointerEvents:'none',zIndex:OVERLAY_Z,display:'none',boxSizing:'border-box'};
@@ -262,6 +262,12 @@ function startInspection(){
   if(inspecting) return;
   inspecting = true;
   overlay.init();
+  if(!document.getElementById('kiro-inspect-cursor')){
+    var s=document.createElement('style');
+    s.id='kiro-inspect-cursor';
+    s.textContent='*{cursor:default!important}';
+    document.head.appendChild(s);
+  }
   document.addEventListener('mousemove', onMouseMove, true);
   document.addEventListener('click', onClick, true);
   document.addEventListener('keydown', onEscape, true);
@@ -270,6 +276,8 @@ function startInspection(){
 function stopInspection(){
   if(!inspecting) return;
   inspecting = false; rafPending = false; lastMouseEvent = null;
+  var cs=document.getElementById('kiro-inspect-cursor');
+  if(cs) cs.remove();
   document.removeEventListener('mousemove', onMouseMove, true);
   document.removeEventListener('click', onClick, true);
   document.removeEventListener('keydown', onEscape, true);
@@ -306,6 +314,7 @@ function onEscape(e){
 
 function handleMessage(e){
   var msg=e.data; if(!msg||typeof msg.type!=='string') return;
+  console.log('[kiro-inspector] received message:', msg.type);
   switch(msg.type){
     case 'start_inspector': startInspection(); break;
     case 'stop_inspector': stopInspection(); break;
@@ -401,16 +410,24 @@ export function startProxy(targetUrl: string): Promise<number> {
             decompressed = proxyRes.pipe(zlib.createInflate());
           }
 
-          let body = "";
-          decompressed.on("data", (c: Buffer | string) => body += c.toString());
+          const chunks: Buffer[] = [];
+          decompressed.on("data", (c: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+          });
           decompressed.on("end", () => {
+            const body = Buffer.concat(chunks).toString("utf-8");
             // Inject before </body> or at end
-            const injected = body.replace(/<\/body>/i, INSPECTOR_SCRIPT + "</body>");
-            res.end(injected === body ? body + INSPECTOR_SCRIPT : injected);
+            // Use a replacer function to avoid $' special replacement patterns in INSPECTOR_SCRIPT
+            const hasBody = /<\/body>/i.test(body);
+            if (hasBody) {
+              res.end(body.replace(/<\/body>/i, () => INSPECTOR_SCRIPT + "</body>"));
+            } else {
+              res.end(body + INSPECTOR_SCRIPT);
+            }
           });
           decompressed.on("error", () => {
             // Decompression failed — send whatever we have
-            res.end(body || "");
+            res.end(chunks.length > 0 ? Buffer.concat(chunks) : "");
           });
         } else {
           res.writeHead(statusCode, headers);

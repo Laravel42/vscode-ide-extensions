@@ -15,10 +15,10 @@ import type { BoxModelData } from '../types';
 // ---------------------------------------------------------------------------
 
 const COLORS = {
-  content: 'rgba(111, 168, 220, 0.66)',
-  padding: 'rgba(147, 196, 125, 0.55)',
-  border: 'rgba(255, 229, 153, 0.66)',
-  margin: 'rgba(246, 178, 107, 0.66)',
+  content: 'rgba(66, 153, 225, 0.20)',
+  padding: 'rgba(72, 199, 142, 0.20)',
+  border: 'rgba(66, 153, 225, 0.15)',
+  margin: 'rgba(239, 68, 68, 0.20)',
 } as const;
 
 const OVERLAY_Z_INDEX = '2147483646';
