@@ -1,0 +1,78 @@
+{
+  "name": "dom-inspector",
+  "displayName": "DOM Inspector",
+  "description": "Pick DOM elements from an embedded browser, find the source code, and get context for AI chat",
+  "version": "0.4.3",
+  "publisher": "L42",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nicola-l42/vscode-extensions"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "domInspector.openUrl",
+        "title": "DOM Inspector: Open URL"
+      },
+      {
+        "command": "domInspector.inspectElement",
+        "title": "DOM Inspector: Inspect Element"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "domInspector.openUrl",
+        "key": "ctrl+shift+u",
+        "mac": "cmd+shift+u"
+      },
+      {
+        "command": "domInspector.inspectElement",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "domInspector",
+          "title": "DOM Inspector",
+          "icon": "media/inspect.svg"
+        }
+      ]
+    },
+    "views": {
+      "domInspector": [
+        {
+          "type": "webview",
+          "id": "domInspector.inspectorSidebar",
+          "name": "DOM Inspector",
+          "icon": "media/inspect.svg",
+          "visibility": "collapsed"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "build": "pnpm compile",
+    "test": "vitest --run",
+    "package": "vsce package --allow-missing-repository --no-dependencies --baseContentUrl ."
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.95.0",
+    "@vitest/coverage-v8": "^4.1.2",
+    "fast-check": "^4.6.0",
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.2"
+  }
+}
