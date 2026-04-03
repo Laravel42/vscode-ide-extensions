@@ -6,7 +6,7 @@
   "publisher": "L42",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nicola-l42/vscode-extensions"
+    "url": "https://github.com/Laravel42/vscode-ide-extensions"
   },
   "engines": {
     "vscode": "^1.95.0"
